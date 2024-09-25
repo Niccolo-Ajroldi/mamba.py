@@ -29,7 +29,7 @@ See Figure 3 of the paper (page 8) for a visual representation of a MambaBlock.
 """
 
 @dataclass
-class MambaConfig:
+class MambaNoGateConfig:
     d_model: int # D
     n_layers: int
     dt_rank: Union[int, str] = 'auto'
@@ -66,8 +66,8 @@ class MambaConfig:
         if self.mup:
             self.mup_width_mult = self.d_model / self.mup_base_width
 
-class Mamba(nn.Module):
-    def __init__(self, config: MambaConfig):
+class MambaNoGate(nn.Module):
+    def __init__(self, config: MambaNoGateConfig):
         super().__init__()
 
         self.config = config
@@ -97,7 +97,7 @@ class Mamba(nn.Module):
         return x, caches
 
 class ResidualBlock(nn.Module):
-    def __init__(self, config: MambaConfig):
+    def __init__(self, config: MambaNoGateConfig):
         super().__init__()
 
         self.mixer = MambaBlock(config)
@@ -125,13 +125,13 @@ class ResidualBlock(nn.Module):
         return output, cache
 
 class MambaBlock(nn.Module):
-    def __init__(self, config: MambaConfig):
+    def __init__(self, config: MambaNoGateConfig):
         super().__init__()
 
         self.config = config
 
         # projects block input from D to 2*ED (two branches)
-        self.in_proj = nn.Linear(config.d_model, 2 * config.d_inner, bias=config.bias)
+        self.in_proj = nn.Linear(config.d_model, config.d_inner, bias=config.bias)
 
         self.conv1d = nn.Conv1d(in_channels=config.d_inner, out_channels=config.d_inner, 
                               kernel_size=config.d_conv, bias=config.conv_bias, 
@@ -210,8 +210,7 @@ class MambaBlock(nn.Module):
 
         _, L, _ = x.shape
 
-        xz = self.in_proj(x) # (B, L, 2*ED)
-        x, z = xz.chunk(2, dim=-1) # (B, L, ED), (B, L, ED)
+        x = self.in_proj(x) # (B, L, ED)
 
         # x branch
         x = x.transpose(1, 2) # (B, ED, L)
@@ -219,17 +218,13 @@ class MambaBlock(nn.Module):
         x = x.transpose(1, 2) # (B, L, ED)
 
         x = F.silu(x)
-        y = self.ssm(x, z)
+        y = self.ssm(x, None)
 
         if self.config.use_cuda:
             output = self.out_proj(y) # (B, L, D)
             return output # the rest of the operations are done in the ssm function (fused with the CUDA pscan)
 
-        # z branch
-        z = F.silu(z)
-
-        output = y * z
-        output = self.out_proj(output) # (B, L, D)
+        output = self.out_proj(y) # (B, L, D)
 
         return output
     

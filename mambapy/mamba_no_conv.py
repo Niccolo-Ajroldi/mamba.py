@@ -29,13 +29,12 @@ See Figure 3 of the paper (page 8) for a visual representation of a MambaBlock.
 """
 
 @dataclass
-class MambaConfig:
+class MambaNoConvConfig:
     d_model: int # D
     n_layers: int
     dt_rank: Union[int, str] = 'auto'
     d_state: int = 16 # N in paper/comments
     expand_factor: int = 2 # E in paper/comments
-    d_conv: int = 4
 
     dt_min: float = 0.001
     dt_max: float = 0.1
@@ -47,7 +46,6 @@ class MambaConfig:
     base_std: float = 0.02
 
     bias: bool = False
-    conv_bias: bool = True
     inner_layernorms: bool = False # apply layernorms to internal activations
 
     mup: bool = False
@@ -66,8 +64,8 @@ class MambaConfig:
         if self.mup:
             self.mup_width_mult = self.d_model / self.mup_base_width
 
-class Mamba(nn.Module):
-    def __init__(self, config: MambaConfig):
+class MambaNoConv(nn.Module):
+    def __init__(self, config: MambaNoConvConfig):
         super().__init__()
 
         self.config = config
@@ -97,7 +95,7 @@ class Mamba(nn.Module):
         return x, caches
 
 class ResidualBlock(nn.Module):
-    def __init__(self, config: MambaConfig):
+    def __init__(self, config: MambaNoConvConfig):
         super().__init__()
 
         self.mixer = MambaBlock(config)
@@ -125,18 +123,13 @@ class ResidualBlock(nn.Module):
         return output, cache
 
 class MambaBlock(nn.Module):
-    def __init__(self, config: MambaConfig):
+    def __init__(self, config: MambaNoConvConfig):
         super().__init__()
 
         self.config = config
 
         # projects block input from D to 2*ED (two branches)
         self.in_proj = nn.Linear(config.d_model, 2 * config.d_inner, bias=config.bias)
-
-        self.conv1d = nn.Conv1d(in_channels=config.d_inner, out_channels=config.d_inner, 
-                              kernel_size=config.d_conv, bias=config.conv_bias, 
-                              groups=config.d_inner,
-                              padding=config.d_conv - 1)
         
         # projects x to input-dependent delta, B, C
         self.x_proj = nn.Linear(config.d_inner, config.dt_rank + 2 * config.d_state, bias=False)
@@ -213,12 +206,6 @@ class MambaBlock(nn.Module):
         xz = self.in_proj(x) # (B, L, 2*ED)
         x, z = xz.chunk(2, dim=-1) # (B, L, ED), (B, L, ED)
 
-        # x branch
-        x = x.transpose(1, 2) # (B, ED, L)
-        x = self.conv1d(x)[:, :, :L] # depthwise convolution over time, with a short filter
-        x = x.transpose(1, 2) # (B, L, ED)
-
-        x = F.silu(x)
         y = self.ssm(x, z)
 
         if self.config.use_cuda:

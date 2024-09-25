@@ -17,6 +17,9 @@ import torch.nn.functional as F
 from mambapy.mamba import Mamba, MambaConfig, RMSNorm
 from mambapy.mamba2 import Mamba2, Mamba2Config
 
+from mambapy.mamba_no_gate import MambaNoGate, MambaNoGateConfig
+from mambapy.mamba_no_conv import MambaNoConv, MambaNoConvConfig
+
 class LM(nn.Module):
     def __init__(self, model_config: Union[MambaConfig, Mamba2Config], vocab_size: int, pad_vocab_size_multiple: int = None):
         super().__init__()
@@ -32,6 +35,10 @@ class LM(nn.Module):
             self.mamba = Mamba(self.config)
         elif isinstance(self.config, Mamba2Config):
             self.mamba = Mamba2(self.config)
+        elif isinstance(self.config, MambaNoGateConfig):
+            self.mamba = MambaNoGate(self.config)
+        elif isinstance(self.config, MambaNoConvConfig):
+            self.mamba = MambaNoConv(self.config)
         else:
             raise NotImplementedError
 
